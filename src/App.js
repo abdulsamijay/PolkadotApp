@@ -4,70 +4,18 @@ import { ApiPromise, WsProvider } from '@polkadot/api';
 let api,wsProvider;
 wsProvider = new WsProvider('wss://kusama-rpc.polkadot.io/')
 
-async function initialize(){
-  api = await ApiPromise.create({ provider: wsProvider })
-  const mingle = await api.isReady;
-  console.log('mingle => ', mingle);
-};
-
-async function balanceAndNounce(){
-  api = await ApiPromise.create({ provider: wsProvider });
-
-  const ADDR = 'Gt6HqWBhdu4Sy1u8ASTbS1qf2Ac5gwdegwr8tWN8saMxPt5';
-  const now = await api.query.timestamp.now();
-  // // Retrieve the account balance & nonce via the system module
-  const { nonce, data: balance } = await api.query.system.account(ADDR);
-  return (`${now}: balance of ${balance.free} and a nonce of ${nonce}`);
-}
-
-async function getGenesisHash() {  
-  api = await ApiPromise.create({ provider: wsProvider });
-  return await api.genesisHash.toHex().toString();
-  // console.log(api);
-  // // The actual address that we will use
-  // const ADDR = 'Gt6HqWBhdu4Sy1u8ASTbS1qf2Ac5gwdegwr8tWN8saMxPt5';
-  
-  // // Retrieve the last timestamp
-  // const now = await api.query.timestamp.now();
-  
-  // // Retrieve the account balance & nonce via the system module
-  // const { nonce, data: balance } = await api.query.system.account(ADDR);
-  // console.log(`${now}: balance of ${balance.free} and a nonce of ${nonce}`);
-  
-  // // console.log(new BN(await api.query.timestamp.now()).toString())
-  // console.log(await api.query.system.account(ADDR))
-  
-  // // Retrieve the chain name
-  // const chain = await api.rpc.system.chain();
-  
-  // // Retrieve the latest header
-  // const lastHeader = await api.rpc.chain.getHeader();
-  
-  // let count = 0;
-  
-  // // Subscribe to the new headers
-  // const unsubHeads = await api.rpc.chain.subscribeNewHeads((lastHeader) => {
-  //   console.log(`${chain}: last block #${lastHeader.number} has hash ${lastHeader.hash}`);
-  
-  //   if (++count === 10) {
-  //     unsubHeads();
-  //   }
-  // });
-}
-
 async function getChainName() {
   api = await ApiPromise.create({ provider: wsProvider });
   return await api.rpc.system.chain();
 }
 
-
-
 function App() {
 
+  const blockModelList = [];
+
+  const [data,setData] = useState([]);
   const [name,setName] = useState('No Chain');
   const [validators,setValidators] = useState('0');
-  const [validatorsList,setValidatorsList] = useState([]);
-  const [validatorsListComission,setValidatorsListComission] = useState([]);
   const [blocks,setBlocks] = useState([]); 
 
   async function tenBlocks(){
@@ -75,44 +23,95 @@ function App() {
     // Subscribe to the new headers
     await api.rpc.chain.subscribeNewHeads((lastHeader) => {
     let oldState = JSON.parse(JSON.stringify(blocks));
-    console.log('Blocks => ',blocks);
+    // console.log('Blocks => ',blocks);
     oldState.push(`last block #${lastHeader.number}  ${lastHeader.hash}`) 
     setBlocks(oldState)
     });
   }
-
   async function validatorsCount(){
     api = await ApiPromise.create({ provider: wsProvider });
     await api.query.staking.validatorCount( (val) => {
       setValidators (val['words'][0]);
-      console.log('Count ',val['words'][0]);
+      // console.log('Count ',val['words'][0]);
     });
   }
 
   async function getCommission(arr){
-    // let oldState = validatorsListComission;
-    // for(let i=0; i < arr.length; i++){
       const prefs = await api.query.staking.validators(arr);
-      console.log(JSON.parse(JSON.stringify(prefs['commission'].toHuman())));
-      // return (JSON.parse(JSON.stringify(prefs['commission'].toHuman())))
-      // oldState.push(JSON.stringify(prefs['commission'].toString()));
-    // }
-    // setValidatorsListComission(oldState);
+      // console.log(JSON.parse(JSON.stringify(prefs['commission'].toHuman())));
+      return await JSON.parse(JSON.stringify(prefs['commission'].toHuman()))
+  }
+
+  async function getStake(arr){
+      const info = await api.query.system.account(arr);
+      // console.log(JSON.parse(JSON.stringify(prefs['commission'].toHuman())));
+      return await JSON.parse(JSON.stringify(info['data'].feeFrozen.toHuman()))
+  }
+  async function getOtherStake(arr){
+    let others = [];
+    const era = await api.query.staking.currentEra();
+    const acc = await api.query.staking.erasStakers(era.toString(),arr);
+    let count = acc['others'].length;
+
+    for(let i=0; i < count; i++) {
+      let who1 = {};
+      who1.account = JSON.parse(JSON.stringify(acc['others'][i].who.toHuman()));
+      who1.value = JSON.parse(JSON.stringify(acc['others'][i].value.toHuman()));
+      others.push(who1);
+    }
+    return others;
+    // return await JSON.parse(JSON.stringify(info['data'].feeFrozen.toHuman()))
+  }
+
+
+  async function events() {
+    const api = await ApiPromise.create({ provider: wsProvider });
+    // Subscribe to system events via storage
+    api.query.system.events((events) => {
+      console.log(`\nReceived ${events.length} events:`);
+  
+      // Loop through the Vec<EventRecord>
+      events.forEach((record) => {
+        // Extract the phase, event and the event types
+        const { event, phase } = record;
+        const types = event.typeDef;
+  
+        // Show what we are busy with
+        if(event.section == 'staking' || event.section == 'imOnline' || event.section == 'offences'){
+          console.log(`\t${event.section}:${event.method}:: (phase=${phase.toString()})`);
+          console.log(`\t\t${event.meta.documentation.toString()}`);
+          // Loop through each of the parameters, displaying the type and data
+          event.data.forEach((data, index) => {
+            console.log(`\t\t\t${types[index].type}: ${data.toString()}`);
+          });
+        }      
+      });
+    });
   }
 
   async function allValidator(){
     api = await ApiPromise.create({ provider: wsProvider });
-    await api.query.session.validators((abc) => {
-      let oldState = validatorsList;
-      // let oldState2 = validatorsListComission;
+    await api.query.session.validators( (abc) => {
+
       for(let i=0; i< abc.length; i++){
-        oldState.push(abc[i].toString());
-        // getCommission(abc[i].toString());
-        // oldState2.push(getCommission(abc[i].toString()));
-        
+
+        let blockModel = {};
+        blockModel.validator=abc[i].toString()
+        getCommission(abc[i].toString()).then((com) => {
+          blockModel.commission=com;
+        }); 
+        getStake(abc[i].toString()).then((com)=>{
+          blockModel.stake=com;
+        });
+        getOtherStake(abc[i].toString()).then((com)=>{
+          blockModel.others=JSON.parse(JSON.stringify(com));
+          // console.log(typeof(com))
+        });
+        blockModelList.push(blockModel);
+
       }
-      setValidatorsList(oldState);
-      // setValidatorsListComission(oldState2);
+      // console.log(blockModelList)
+      setData(blockModelList);
 
     });
   
@@ -130,9 +129,11 @@ function App() {
 
     tenBlocks();
 
+    events();
+
   },[])
   return (
-    <div className="container">
+    <div className="container-fluid">
       <div className="row mt-3">
 
         <div className="col-md-3 text-center">
@@ -159,7 +160,6 @@ function App() {
             <p>Latest Information</p>
             <p>
               {
-                // latestBlock.map(lb => <li>{lb}</li>)
                 blocks.map(block => <p>{block}</p>)
               }
             </p>
@@ -177,18 +177,25 @@ function App() {
                 <thead>
                   <tr>
                     <td>Validator</td>
-                    <td>Some1</td>
+                    <td>Own Stake</td>
+                    <td>Other Stake</td>
                     <td>Commission</td>
                   </tr>
                 </thead>
                 <tbody>
                       {
-                        validatorsList.map(validators =>
-                          <tr>
-                            <td>{validators}</td>
-                            <td></td>
-                            <td>{validatorsListComission}</td>
-                          </tr>)
+                        data.map(obj => 
+                          <tr key={obj.validator}>
+                            <td>{obj.validator}</td>
+                            <td>{obj.stake}</td>
+                            <td className="f1">
+                              {Array.isArray(obj.others)  && obj.others.map(obj2 => 
+                              <li key={obj.value}>{obj2.account} => {obj2.value}</li>
+                              )}
+                            </td>
+                            <td>{obj.commission}</td>
+                          </tr>
+                        )
                       }
                 </tbody>
               </table>
